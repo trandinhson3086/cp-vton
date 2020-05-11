@@ -149,10 +149,13 @@ class CPDataLoader(object):
     def __init__(self, opt, dataset):
         super(CPDataLoader, self).__init__()
 
-        if opt.shuffle :
-            train_sampler = torch.utils.data.sampler.RandomSampler(dataset)
+        if opt.distributed:
+            train_sampler = data.distributed.DistributedSampler(dataset, shuffle=opt.shuffle)
         else:
-            train_sampler = None
+            if opt.shuffle :
+                train_sampler = torch.utils.data.sampler.RandomSampler(dataset)
+            else:
+                train_sampler = None
 
         self.data_loader = torch.utils.data.DataLoader(
                 dataset, batch_size=opt.batch_size, shuffle=(train_sampler is None),

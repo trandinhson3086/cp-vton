@@ -11,7 +11,16 @@ from networks import GMM, UnetGenerator, VGGLoss, load_checkpoint, save_checkpoi
 
 from torch.utils.tensorboard import SummaryWriter
 from visualization import board_add_images
+from distributed import (
+    get_rank,
+    synchronize,
+    reduce_loss_dict,
+    reduce_sum,
+    get_world_size,
+)
 
+def single_gpu_flag(args):
+    return not args.distributed or (args.distributed and args.local_rank % torch.cuda.device_count() == 0)
 
 def get_opt():
     parser = argparse.ArgumentParser()
@@ -19,7 +28,9 @@ def get_opt():
     parser.add_argument("--gpu_ids", default = "")
     parser.add_argument('-j', '--workers', type=int, default=1)
     parser.add_argument('-b', '--batch-size', type=int, default=4)
-    
+
+    parser.add_argument('--local_rank', type=int, default=0, help="gpu to use, used for distributed training")
+
     parser.add_argument("--dataroot", default = "data")
     parser.add_argument("--datamode", default = "train")
     parser.add_argument("--stage", default = "GMM")
@@ -91,10 +102,9 @@ def train_gmm(opt, train_loader, model, board):
             save_checkpoint(model, os.path.join(opt.checkpoint_dir, opt.name, 'step_%06d.pth' % (step+1)))
 
 
-def train_tom(opt, train_loader, model, gmm_model, board):
-    model.cuda()
+def train_tom(opt, train_loader, model, model_module, gmm_model, board):
+
     model.train()
-    gmm_model.cuda()
     gmm_model.eval()
 
     # criterion
@@ -104,8 +114,6 @@ def train_tom(opt, train_loader, model, gmm_model, board):
     
     # optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.5, 0.999))
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda = lambda step: 1.0 -
-            max(0, step - opt.keep_step) / float(opt.decay_step + 1))
     
     for step in range(opt.keep_step + opt.decay_step):
         iter_start_time = time.time()
@@ -143,7 +151,7 @@ def train_tom(opt, train_loader, model, gmm_model, board):
         loss.backward()
         optimizer.step()
             
-        if (step+1) % opt.display_count == 0:
+        if (step+1) % opt.display_count == 0 and single_gpu_flag(opt):
             board_add_images(board, 'combine', visuals, step+1)
             board.add_scalar('metric', loss.item(), step+1)
             board.add_scalar('L1', loss_l1.item(), step+1)
@@ -154,8 +162,8 @@ def train_tom(opt, train_loader, model, gmm_model, board):
                     % (step+1, t, loss.item(), loss_l1.item(), 
                     loss_vgg.item(), loss_mask.item()), flush=True)
 
-        if (step+1) % opt.save_count == 0:
-            save_checkpoint(model, os.path.join(opt.checkpoint_dir, opt.name, 'step_%06d.pth' % (step+1)))
+        if (step+1) % opt.save_count == 0 and single_gpu_flag(opt):
+            save_checkpoint(model_module, os.path.join(opt.checkpoint_dir, opt.name, 'step_%06d.pth' % (step+1)))
 
 
 
@@ -163,7 +171,16 @@ def main():
     opt = get_opt()
     print(opt)
     print("Start to train stage: %s, named: %s!" % (opt.stage, opt.name))
-   
+
+    n_gpu = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
+    opt.distributed = n_gpu > 1
+    local_rank = opt.local_rank
+
+    if opt.distributed:
+        torch.cuda.set_device(opt.local_rank)
+        torch.distributed.init_process_group(backend='nccl', init_method='env://')
+        synchronize()
+
     # create dataset 
     train_dataset = CPDataset(opt)
 
@@ -186,12 +203,28 @@ def main():
 
         gmm_model = GMM(opt)
         load_checkpoint(gmm_model, "checkpoints/gmm_train_new/step_020000.pth")
+        gmm_model.cuda()
 
         model = UnetGenerator(25, 4, 6, ngf=64, norm_layer=nn.InstanceNorm2d)
+        model.cuda()
+        # if opt.distributed:
+        #     model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+
         if not opt.checkpoint =='' and os.path.exists(opt.checkpoint):
             load_checkpoint(model, opt.checkpoint)
-        train_tom(opt, train_loader, model, gmm_model, board)
-        save_checkpoint(model, os.path.join(opt.checkpoint_dir, opt.name, 'tom_final.pth'))
+
+        model_module = model
+        if opt.distributed:
+            model = torch.nn.parallel.DistributedDataParallel(model,
+                                                                       device_ids=[local_rank],
+                                                                       output_device=local_rank,
+                                                                       find_unused_parameters=True)
+            model_module = model.module
+
+
+        train_tom(opt, train_loader, model, model_module, gmm_model, board)
+        if single_gpu_flag(opt):
+            save_checkpoint(model_module, os.path.join(opt.checkpoint_dir, opt.name, 'tom_final.pth'))
     else:
         raise NotImplementedError('Model [%s] is not implemented' % opt.stage)
         
