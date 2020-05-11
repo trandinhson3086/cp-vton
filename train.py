@@ -9,8 +9,8 @@ import time
 from cp_dataset import CPDataset, CPDataLoader
 from networks import GMM, UnetGenerator, VGGLoss, load_checkpoint, save_checkpoint
 
-from tensorboardX import SummaryWriter
-from visualization import board_add_image, board_add_images
+from torch.utils.tensorboard import SummaryWriter
+from visualization import board_add_images
 
 
 def get_opt():
@@ -91,10 +91,12 @@ def train_gmm(opt, train_loader, model, board):
             save_checkpoint(model, os.path.join(opt.checkpoint_dir, opt.name, 'step_%06d.pth' % (step+1)))
 
 
-def train_tom(opt, train_loader, model, board):
+def train_tom(opt, train_loader, model, gmm_model, board):
     model.cuda()
     model.train()
-    
+    gmm_model.cuda()
+    gmm_model.eval()
+
     # criterion
     criterionL1 = nn.L1Loss()
     criterionVGG = VGGLoss()
@@ -117,7 +119,12 @@ def train_tom(opt, train_loader, model, board):
         agnostic = inputs['agnostic'].cuda()
         c = inputs['cloth'].cuda()
         cm = inputs['cloth_mask'].cuda()
-        
+
+        with torch.no_grad():
+            grid, theta = gmm_model(agnostic, c)
+            c = F.grid_sample(c, grid, padding_mode='border')
+            cm = F.grid_sample(cm, grid, padding_mode='zeros')
+
         outputs = model(torch.cat([agnostic, c],1))
         p_rendered, m_composite = torch.split(outputs, 3,1)
         p_rendered = F.tanh(p_rendered)
@@ -176,10 +183,14 @@ def main():
         train_gmm(opt, train_loader, model, board)
         save_checkpoint(model, os.path.join(opt.checkpoint_dir, opt.name, 'gmm_final.pth'))
     elif opt.stage == 'TOM':
+
+        gmm_model = GMM(opt)
+        load_checkpoint(gmm_model, "checkpoints/gmm_train_new/step_020000.pth")
+
         model = UnetGenerator(25, 4, 6, ngf=64, norm_layer=nn.InstanceNorm2d)
         if not opt.checkpoint =='' and os.path.exists(opt.checkpoint):
             load_checkpoint(model, opt.checkpoint)
-        train_tom(opt, train_loader, model, board)
+        train_tom(opt, train_loader, model, gmm_model, board)
         save_checkpoint(model, os.path.join(opt.checkpoint_dir, opt.name, 'tom_final.pth'))
     else:
         raise NotImplementedError('Model [%s] is not implemented' % opt.stage)
