@@ -21,9 +21,6 @@ def download(url, filename, cookies=None):
                 downloaded += len(data)
                 f.write(data)
                 completed = int(50*downloaded/total)
-                sys.stdout.write('\r[{}{}]'.format(
-                    '█' * completed, '.' * (50-completed)))
-                sys.stdout.flush()
     sys.stdout.write('\n')
 
 
