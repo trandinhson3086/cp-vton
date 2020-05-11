@@ -11,6 +11,7 @@ from networks import GMM, UnetGenerator, VGGLoss, load_checkpoint, save_checkpoi
 from resnet import Embedder
 from torch.utils.tensorboard import SummaryWriter
 from visualization import board_add_images
+from tqdm import tqdm
 from distributed import (
     get_rank,
     synchronize,
@@ -167,6 +168,7 @@ def train_tom(opt, train_loader, model, model_module, gmm_model, board):
 
 
 def train_identity_embedding(opt, train_loader, model, board):
+    model.cuda()
     model.train()
 
     # criterion
@@ -176,7 +178,11 @@ def train_identity_embedding(opt, train_loader, model, board):
     # optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.5, 0.999))
 
-    for step in range(opt.keep_step + opt.decay_step):
+    pbar = range(opt.keep_step + opt.decay_step)
+    if single_gpu_flag(opt):
+        pbar = tqdm(pbar)
+
+    for step in pbar:
         iter_start_time = time.time()
         inputs_1, inputs_2 = train_loader.next_batch()
 
@@ -206,14 +212,14 @@ def train_identity_embedding(opt, train_loader, model, board):
         loss.backward()
         optimizer.step()
 
-        if (step + 1) % opt.display_count == 0 and single_gpu_flag(opt):
+        if single_gpu_flag(opt):
             board.add_scalar('metric', loss.item(), step + 1)
             board.add_scalar('MSE', mean_squared_loss.item(), step + 1)
             board.add_scalar('trip', triplet_loss.item(), step + 1)
-            t = time.time() - iter_start_time
-            print('step: %8d, time: %.3f, loss: %.4f, mse: %.4f, trip: %.4f'
-                  % (step + 1, t, loss.item(), mean_squared_loss.item(),
-                     triplet_loss.item()), flush=True)
+
+            pbar.set_description('step: %8d, loss: %.4f, mse: %.4f, trip: %.4f'
+                  % (step + 1, loss.item(), mean_squared_loss.item(),
+                     triplet_loss.item()))
 
         if (step + 1) % opt.save_count == 0 and single_gpu_flag(opt):
             save_checkpoint(model, os.path.join(opt.checkpoint_dir, opt.name, 'step_%06d.pth' % (step + 1)))

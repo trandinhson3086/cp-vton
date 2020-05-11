@@ -22,6 +22,15 @@ You can get the processed data at [GoogleDrive](https://drive.google.com/open?id
 python data_download.py
 ```
 
+## Identity Embedding
+
+### training
+
+An example training command is
+```
+python train.py --name identity_train_new --stage identity --workers 12 --save_count 10000 --shuffle -b 32
+```
+
 ## Geometric Matching Module
 
 ### training
