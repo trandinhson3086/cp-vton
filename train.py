@@ -8,7 +8,7 @@ import os
 import time
 from cp_dataset import CPDataset, CPDataLoader
 from networks import GMM, UnetGenerator, VGGLoss, load_checkpoint, save_checkpoint
-
+from resnet import Embedder
 from torch.utils.tensorboard import SummaryWriter
 from visualization import board_add_images
 from distributed import (
@@ -166,6 +166,58 @@ def train_tom(opt, train_loader, model, model_module, gmm_model, board):
             save_checkpoint(model_module, os.path.join(opt.checkpoint_dir, opt.name, 'step_%06d.pth' % (step+1)))
 
 
+def train_identity_embedding(opt, train_loader, model, board):
+    model.train()
+
+    # criterion
+    mse_criterion = torch.nn.MSELoss()
+    triplet_criterion = torch.nn.TripletMarginLoss(margin=0.3)
+
+    # optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.5, 0.999))
+
+    for step in range(opt.keep_step + opt.decay_step):
+        iter_start_time = time.time()
+        inputs_1, inputs_2 = train_loader.next_batch()
+
+        img_1 = inputs_1['cloth'].cuda()
+        img_ou_1 = inputs_1['image'].cuda()
+        img_2 = inputs_2['cloth'].cuda()
+        img_ou_2 = inputs_2['image'].cuda()
+
+        pred_prod_embedding_1, pred_outfit_embedding_1 = model(img_1, img_ou_1)
+        pred_prod_embedding_2, pred_outfit_embedding_2 = model(img_2, img_ou_2)
+
+        # msee loss
+        mean_squared_loss = (mse_criterion(pred_outfit_embedding_1, pred_prod_embedding_1) + mse_criterion(
+            pred_outfit_embedding_2, pred_prod_embedding_2)) / 2
+
+        # triplet loss
+        triplet_loss = triplet_criterion(pred_outfit_embedding_1, pred_prod_embedding_1,
+                                           pred_outfit_embedding_2) + triplet_criterion(pred_outfit_embedding_2,
+                                                                                        pred_prod_embedding_2,
+                                                                                        pred_outfit_embedding_1) + triplet_criterion(
+            pred_outfit_embedding_1, pred_prod_embedding_1, pred_prod_embedding_2) + triplet_criterion(
+            pred_outfit_embedding_2, pred_prod_embedding_2,
+            pred_prod_embedding_1)
+
+        loss = mean_squared_loss + triplet_loss
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if (step + 1) % opt.display_count == 0 and single_gpu_flag(opt):
+            board.add_scalar('metric', loss.item(), step + 1)
+            board.add_scalar('MSE', mean_squared_loss.item(), step + 1)
+            board.add_scalar('trip', triplet_loss.item(), step + 1)
+            t = time.time() - iter_start_time
+            print('step: %8d, time: %.3f, loss: %.4f, mse: %.4f, trip: %.4f'
+                  % (step + 1, t, loss.item(), mean_squared_loss.item(),
+                     triplet_loss.item()), flush=True)
+
+        if (step + 1) % opt.save_count == 0 and single_gpu_flag(opt):
+            save_checkpoint(model, os.path.join(opt.checkpoint_dir, opt.name, 'step_%06d.pth' % (step + 1)))
+
 
 def main():
     opt = get_opt()
@@ -225,6 +277,12 @@ def main():
         train_tom(opt, train_loader, model, model_module, gmm_model, board)
         if single_gpu_flag(opt):
             save_checkpoint(model_module, os.path.join(opt.checkpoint_dir, opt.name, 'tom_final.pth'))
+    elif opt.stage == "identity":
+        model = Embedder()
+        if not opt.checkpoint =='' and os.path.exists(opt.checkpoint):
+            load_checkpoint(model, opt.checkpoint)
+        train_identity_embedding(opt, train_loader, model, board)
+        save_checkpoint(model, os.path.join(opt.checkpoint_dir, opt.name, 'gmm_final.pth'))
     else:
         raise NotImplementedError('Model [%s] is not implemented' % opt.stage)
         

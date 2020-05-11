@@ -9,6 +9,7 @@ from PIL import ImageDraw
 import os.path as osp
 import numpy as np
 import json
+import random
 
 class CPDataset(data.Dataset):
     """Dataset for CP-VTON.
@@ -31,7 +32,8 @@ class CPDataset(data.Dataset):
         self.transform_1d = transforms.Compose([
                 transforms.ToTensor(),
                 transforms.Normalize((0.5,), (0.5,))])
-        
+        self.paired = opt.stage == "identity"
+
         # load data list
         im_names = []
         c_names = []
@@ -48,6 +50,13 @@ class CPDataset(data.Dataset):
         return "CPDataset"
 
     def __getitem__(self, index):
+        if self.paired:
+            alternative_index = random.choice(range(len(self)))
+            return self.get_item(index), self.get_item(alternative_index)
+        else:
+            return self.get_item(index)
+
+    def get_item(self, index):
         c_name = self.c_names[index]
         im_name = self.im_names[index]
 
