@@ -252,7 +252,7 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
         output_2_feats = vgg_extractor(output_2)
         transfer_2_feats = vgg_extractor(transfer_2)
 
-        style_reg = utils.compute_style_loss(output_1_feats, transfer_1_feats, l1_criterion) + utils.compute_style_loss(output_2_feats, transfer_2_feats, l1_criterion)
+        style_reg = utils.compaute_style_loss(output_1_feats, transfer_1_feats, l1_criterion) + utils.compute_style_loss(output_2_feats, transfer_2_feats, l1_criterion)
         perceptual_reg = utils.compute_perceptual_loss(output_1_feats, transfer_1_feats, l1_criterion) + utils.compute_perceptual_loss(output_2_feats, transfer_2_feats, l1_criterion)
         l1_reg = l1_criterion(output_1, transfer_1) + l1_criterion(output_2, transfer_2)
 
@@ -261,11 +261,10 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
         # consistency loss
         consistency_loss = l1_criterion(transfer_1 - output_1, transfer_2 - output_2)
 
-
-        visuals = [[im_h, shape, im_pose],
-                   [c, c_2, m_composite * 2 - 1],
-                   [transfer_1, output_1, (transfer_1 - output_1) + 1],
-                   [transfer_2, output_2, (transfer_2 - output_2) + 1]]
+        visuals = [[im_h, shape, im],
+                   [c, c_2, torch.cat([gt_residual, gt_residual, gt_residual], dim=1)],
+                   [transfer_1, output_1, (transfer_1 - output_1) / 2],
+                   [transfer_2, output_2, (transfer_2 - output_2) / 2]]
 
         total_loss = lambdas['identity'] * identity_loss + \
                      lambdas['mse'] * mse_loss + \
@@ -276,11 +275,6 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
         optimizer.step()
 
         if single_gpu_flag(opt):
-            board.add_scalar('metric', loss.item(), step + 1)
-            board.add_scalar('MSE', mean_squared_loss.item(), step + 1)
-            board.add_scalar('trip', triplet_loss.item(), step + 1)
-
-        if (step + 1) % opt.display_count == 0 and single_gpu_flag(opt):
             board_add_images(board, 'combine', visuals, step + 1)
             board.add_scalar('identity', identity_loss.item(), step + 1)
             board.add_scalar('vis_reg', vis_reg_loss.item(), step + 1)
@@ -424,15 +418,11 @@ def main():
     elif opt.stage == 'residual':
 
         gmm_model = GMM(opt)
-        load_checkpoint(gmm_model, "checkpoints/gmm_train_new/step_030000.pth")
+        load_checkpoint(gmm_model, "checkpoints/gmm_train_new/step_020000.pth")
         gmm_model.cuda()
 
         generator_model = UnetGenerator(25, 4, 6, ngf=64, norm_layer=nn.InstanceNorm2d)
-        load_checkpoint(generator_model, "checkpoints/tom_train_new/step_030000.pth")
-        generator_model.cuda()
-
-        generator_model = UnetGenerator(25, 4, 6, ngf=64, norm_layer=nn.InstanceNorm2d)
-        load_checkpoint(generator_model, "checkpoints/tom_train_new/step_030000.pth")
+        load_checkpoint(generator_model, "checkpoints/tom_train_new/step_038000.pth")
         generator_model.cuda()
 
         embedder_model = Embedder()
@@ -443,7 +433,6 @@ def main():
         if opt.distributed:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model.cuda()
-
 
         if not opt.checkpoint =='' and os.path.exists(opt.checkpoint):
             load_checkpoint(model, opt.checkpoint)
