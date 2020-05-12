@@ -248,7 +248,9 @@ def main():
     # visualization
     if not os.path.exists(opt.tensorboard_dir):
         os.makedirs(opt.tensorboard_dir)
-    board = SummaryWriter(log_dir = os.path.join(opt.tensorboard_dir, opt.name))
+
+    if single_gpu_flag(opt):
+        board = SummaryWriter(log_dir = os.path.join(opt.tensorboard_dir, opt.name))
    
     # create model & train & save the final checkpoint
     if opt.stage == 'GMM':
