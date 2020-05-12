@@ -52,6 +52,8 @@ class CPDataset(data.Dataset):
     def __getitem__(self, index):
         if self.paired:
             alternative_index = random.choice(range(len(self)))
+            while alternative_index == index:
+                alternative_index = random.choice(range(len(self)))
             return self.get_item(index), self.get_item(alternative_index)
         else:
             return self.get_item(index)

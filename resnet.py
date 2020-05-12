@@ -1,10 +1,10 @@
 import torch.nn as nn
 import math
 import torch.utils.model_zoo as model_zoo
-
+import torch
+import torch.nn.functional as F
 
 __all__ = ['ResNet', 'resnet18']
-
 
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
@@ -36,7 +36,6 @@ class BasicBlock(nn.Module):
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-
         out = self.conv2(out)
         out = self.bn2(out)
 
@@ -50,10 +49,10 @@ class BasicBlock(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, channel=3, dense_input_size=256):
+    def __init__(self, block, layers, embedding_size=64):
         self.inplanes = 64
         super(ResNet, self).__init__()
-        self.conv1 = nn.Conv2d(channel, 64, kernel_size=7, stride=2, padding=3,
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
@@ -61,7 +60,8 @@ class ResNet(nn.Module):
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.maxpool_2 = nn.MaxPool2d(2)
+        self.avgpool = nn.AvgPool2d(7)
+        self.fc_embed = nn.Linear(512 * block.expansion, embedding_size)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -88,6 +88,7 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
+
     def forward(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
@@ -95,9 +96,14 @@ class ResNet(nn.Module):
         x = self.maxpool(x)
 
         x = self.layer1(x)
+
         x = self.layer2(x)
         x = self.layer3(x)
-        x = self.maxpool_2(x)
+
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc_embed(x)
+
         return x
 
 
@@ -105,7 +111,6 @@ class Embedder(nn.Module):
 
     def __init__(self):
         super(Embedder, self).__init__()
-
         self.embedder_a = resnet18(True)
         self.embedder_b = resnet18(True)
 
