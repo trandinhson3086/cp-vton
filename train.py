@@ -252,7 +252,7 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
         output_2_feats = vgg_extractor(output_2)
         transfer_2_feats = vgg_extractor(transfer_2)
 
-        style_reg = utils.compaute_style_loss(output_1_feats, transfer_1_feats, l1_criterion) + utils.compute_style_loss(output_2_feats, transfer_2_feats, l1_criterion)
+        style_reg = utils.compute_style_loss(output_1_feats, transfer_1_feats, l1_criterion) + utils.compute_style_loss(output_2_feats, transfer_2_feats, l1_criterion)
         perceptual_reg = utils.compute_perceptual_loss(output_1_feats, transfer_1_feats, l1_criterion) + utils.compute_perceptual_loss(output_2_feats, transfer_2_feats, l1_criterion)
         l1_reg = l1_criterion(output_1, transfer_1) + l1_criterion(output_2, transfer_2)
 
@@ -276,10 +276,11 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
 
         if single_gpu_flag(opt):
             board_add_images(board, 'combine', visuals, step + 1)
-            board.add_scalar('identity', identity_loss.item(), step + 1)
-            board.add_scalar('vis_reg', vis_reg_loss.item(), step + 1)
-            board.add_scalar('mse', mse_loss.item(), step + 1)
-            board.add_scalar('consist', consistency_loss.item(), step + 1)
+            board.add_scalar('loss/total', total_loss.item(), step + 1)
+            board.add_scalar('loss/identity', identity_loss.item(), step + 1)
+            board.add_scalar('loss/vis_reg', vis_reg_loss.item(), step + 1)
+            board.add_scalar('loss/mse', mse_loss.item(), step + 1)
+            board.add_scalar('loss/consist', consistency_loss.item(), step + 1)
             t = time.time() - iter_start_time
             pbar.set_description('step: %8d, time: %.3f, loss: %.4f, identity: %.4f, vis_reg: %.4f, mse: %.4f, consist: %.4f'
                   % (step + 1, t, total_loss.item(), identity_loss.item(),
