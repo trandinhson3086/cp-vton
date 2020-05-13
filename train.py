@@ -247,9 +247,9 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
 
         if opt.use_gan:
             # train discriminator
-            real_L_logit, real_L_cam_logit, real_G_logit, real_G_cam_logit = discriminator(im)
-            fake_L_logit_1, fake_L_cam_logit_1, fake_G_logit_1, fake_G_cam_logit_1 = discriminator(output_1.detach())
-            fake_L_logit_2, fake_L_cam_logit_2, fake_G_logit_2, fake_G_cam_logit_2 = discriminator(output_2.detach())
+            real_L_logit, real_L_cam_logit, real_G_logit, real_G_cam_logit = discriminator(F.interpolate(im, size=(256, 256), mode='bilinear'))
+            fake_L_logit_1, fake_L_cam_logit_1, fake_G_logit_1, fake_G_cam_logit_1 = discriminator(F.interpolate(output_1, size=(256, 256), mode='bilinear').detach())
+            fake_L_logit_2, fake_L_cam_logit_2, fake_G_logit_2, fake_G_cam_logit_2 = discriminator(F.interpolate(output_2, size=(256, 256), mode='bilinear').detach())
 
             D_true_loss = adv_criterion(real_L_logit, True) + \
                      adv_criterion(real_G_logit, True) + \
@@ -266,8 +266,8 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
             D_optim.step()
 
             # train generator
-            fake_L_logit_1, fake_L_cam_logit_1, fake_G_logit_1, fake_G_cam_logit_1 = discriminator(output_1)
-            fake_L_logit_2, fake_L_cam_logit_2, fake_G_logit_2, fake_G_cam_logit_2 = discriminator(output_2)
+            fake_L_logit_1, fake_L_cam_logit_1, fake_G_logit_1, fake_G_cam_logit_1 = discriminator(F.interpolate(output_1, size=(256, 256), mode='bilinear'))
+            fake_L_logit_2, fake_L_cam_logit_2, fake_G_logit_2, fake_G_cam_logit_2 = discriminator(F.interpolate(output_2, size=(256, 256), mode='bilinear'))
 
             G_adv_loss = adv_criterion(torch.cat([fake_L_logit_1, fake_L_logit_2], dim=0), True) + \
                          adv_criterion(torch.cat([fake_G_logit_1, fake_G_logit_2], dim=0), True) + \
