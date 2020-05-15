@@ -188,7 +188,7 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
     adv_criterion = utils.AdversarialLoss('lsgan').cuda()
 
     # optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.5, 0.999))
+    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.5, 0.999, weight_decay=1e-4))
     if opt.use_gan:
         D_optim = torch.optim.Adam(discriminator.parameters(), lr=opt.lr, betas=(0.5, 0.999), weight_decay=1e-4)
 
@@ -234,7 +234,7 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
             transfer_2 = c_2 * m_composite_2 + p_rendered_2 * (1 - m_composite_2)
 
 
-        gt_residual = (torch.mean(im, dim=1) - torch.mean(transfer_1, dim=1)).unsqueeze(1) / 2
+        gt_residual = (torch.mean(im, dim=1) - torch.mean(transfer_1, dim=1)).unsqueeze(1)
 
         output_1 = model(torch.cat([transfer_1, gt_residual.detach()], dim=1))
         output_2 = model(torch.cat([transfer_2, gt_residual.detach()], dim=1))
@@ -275,22 +275,19 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
                          adv_criterion(torch.cat([fake_G_cam_logit_1, fake_G_cam_logit_2], dim=0), True)
 
         # mse loss
-        mse_loss = mse_criterion(output_1, im)
+        mse_loss = l1_criterion(output_1, im) + l1_criterion(output_2, transfer_2)
 
         # identity loss
         identity_loss = mse_criterion(embedding_1, embedding_1_t) + mse_criterion(embedding_2, embedding_2_t)
 
         # vis reg loss
         output_1_feats = vgg_extractor(output_1)
-        transfer_1_feats = vgg_extractor(transfer_1)
-        output_2_feats = vgg_extractor(output_2)
-        transfer_2_feats = vgg_extractor(transfer_2)
+        gt_feats = vgg_extractor(im)
 
-        style_reg = utils.compute_style_loss(output_1_feats, transfer_1_feats, l1_criterion) + utils.compute_style_loss(output_2_feats, transfer_2_feats, l1_criterion)
-        perceptual_reg = utils.compute_perceptual_loss(output_1_feats, transfer_1_feats, l1_criterion) + utils.compute_perceptual_loss(output_2_feats, transfer_2_feats, l1_criterion)
-        l1_reg = l1_criterion(output_1, transfer_1) + l1_criterion(output_2, transfer_2)
+        style_reg = utils.compute_style_loss(output_1_feats, gt_feats, l1_criterion)
+        perceptual_reg = utils.compute_perceptual_loss(output_1_feats, gt_feats, l1_criterion)
 
-        vis_reg_loss = l1_reg * lambdas_vis_reg["l1"] + style_reg * lambdas_vis_reg["style"] + perceptual_reg * lambdas_vis_reg["prc"]
+        vis_reg_loss = style_reg * lambdas_vis_reg["style"] + perceptual_reg * lambdas_vis_reg["prc"]
 
         # consistency loss
         consistency_loss = l1_criterion(transfer_1 - output_1, transfer_2 - output_2)
