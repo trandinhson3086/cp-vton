@@ -174,7 +174,7 @@ def train_tom(opt, train_loader, model, model_module, gmm_model, board):
 def train_residual(opt, train_loader, model, model_module, gmm_model, generator, image_embedder, board, discriminator=None, discriminator_module=None):
 
     lambdas_vis_reg = {'l1': 1.0, 'prc': 0.05, 'style': 100.0}
-    lambdas = {'adv': 0.25, 'identity': 20, 'mse': 50, 'vis_reg': 1, 'consist': 5}
+    lambdas = {'adv': 0.25, 'identity': 20, 'mse': 50, 'vis_reg': .5, 'consist': 50}
 
     model.train()
     gmm_model.eval()
@@ -197,7 +197,6 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
         pbar = tqdm(pbar)
 
     for step in pbar:
-        iter_start_time = time.time()
         inputs, inputs_2 = train_loader.next_batch()
 
         im = inputs['image'].cuda()
@@ -293,7 +292,7 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
         vis_reg_loss = l1_reg * lambdas_vis_reg["l1"] + style_reg * lambdas_vis_reg["style"] + perceptual_reg * lambdas_vis_reg["prc"]
 
         # consistency loss
-        consistency_loss = l1_criterion(transfer_1 - output_1, transfer_2 - output_2)
+        consistency_loss = mse_criterion(transfer_1 - output_1, transfer_2 - output_2)
 
         visuals = [[im_h, shape, im],
                    [c, c_2, torch.cat([gt_residual, gt_residual, gt_residual], dim=1)],
@@ -313,7 +312,9 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
         optimizer.step()
 
         if single_gpu_flag(opt):
-            board_add_images(board, 'combine', visuals, step + 1)
+
+            if (step + 1) % opt.display_count == 0:
+                board_add_images(board, str(step + 1), visuals, step + 1)
             board.add_scalar('loss/total', total_loss.item(), step + 1)
             board.add_scalar('loss/identity', identity_loss.item(), step + 1)
             board.add_scalar('loss/vis_reg', vis_reg_loss.item(), step + 1)
@@ -327,11 +328,10 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
                   % (step + 1, total_loss.item(), identity_loss.item(),
                      vis_reg_loss.item(), mse_loss.item(), consistency_loss.item()))
 
-        if (step + 1) % opt.save_count == 0 and single_gpu_flag(opt):
+        if (step+1) % opt.save_count == 0 and single_gpu_flag(opt):
             save_checkpoint(model_module, os.path.join(opt.checkpoint_dir, opt.name, 'step_%06d.pth' % (step + 1)))
             if opt.use_gan:
                 save_checkpoint(discriminator_module, os.path.join(opt.checkpoint_dir, opt.name, 'step_disc_%06d.pth' % (step + 1)))
-
 
 def train_identity_embedding(opt, train_loader, model, board):
     model.cuda()
@@ -418,7 +418,7 @@ def main():
     board = None
     if single_gpu_flag(opt):
         board = SummaryWriter(log_dir = os.path.join(opt.tensorboard_dir, opt.name))
-   
+
     # create model & train & save the final checkpoint
     if opt.stage == 'GMM':
         model = GMM(opt)
@@ -485,6 +485,8 @@ def main():
 
         if not opt.checkpoint =='' and os.path.exists(opt.checkpoint):
             load_checkpoint(model, opt.checkpoint)
+            if opt.use_gan:
+                load_checkpoint(discriminator, opt.checkpoint.replace("step_", "step_disc_"))
 
         model_module = model
         if opt.use_gan:
