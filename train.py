@@ -173,8 +173,8 @@ def train_tom(opt, train_loader, model, model_module, gmm_model, board):
 
 def train_residual(opt, train_loader, model, model_module, gmm_model, generator, image_embedder, board, discriminator=None, discriminator_module=None):
 
-    lambdas_vis_reg = {'l1': 1.0, 'prc': 0.05, 'style': 100.0}
-    lambdas = {'adv': 0.25, 'identity': 20, 'mse': 50, 'vis_reg': .5, 'consist': 50}
+    lambdas_vis = {'l1': 1.0, 'prc': 0.05, 'style': 100.0}
+    lambdas = {'adv': 0.25, 'identity': 20, 'match_gt': 20, 'vis_reg': 1, 'consist': 50}
 
     model.train()
     gmm_model.eval()
@@ -188,7 +188,7 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
     adv_criterion = utils.AdversarialLoss('lsgan').cuda()
 
     # optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.5, 0.999, weight_decay=1e-4))
+    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.5, 0.999))
     if opt.use_gan:
         D_optim = torch.optim.Adam(discriminator.parameters(), lr=opt.lr, betas=(0.5, 0.999), weight_decay=1e-4)
 
@@ -273,20 +273,19 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
                          adv_criterion(torch.cat([fake_L_cam_logit_1, fake_L_cam_logit_2], dim=0), True) + \
                          adv_criterion(torch.cat([fake_G_cam_logit_1, fake_G_cam_logit_2], dim=0), True)
 
-        # mse loss
-        mse_loss = l1_criterion(output_1, im) + l1_criterion(output_2, transfer_2)
-
         # identity loss
         identity_loss = mse_criterion(embedding_1, embedding_1_t) + mse_criterion(embedding_2, embedding_2_t)
 
-        # vis reg loss
         output_1_feats = vgg_extractor(output_1)
         gt_feats = vgg_extractor(im)
 
         style_reg = utils.compute_style_loss(output_1_feats, gt_feats, l1_criterion)
         perceptual_reg = utils.compute_perceptual_loss(output_1_feats, gt_feats, l1_criterion)
 
-        vis_reg_loss = style_reg * lambdas_vis_reg["style"] + perceptual_reg * lambdas_vis_reg["prc"]
+        # match ground truth loss
+        match_gt_loss = l1_criterion(output_1, im) * lambdas_vis["l1"] + style_reg * lambdas_vis["style"] + perceptual_reg * lambdas_vis["prc"]
+
+        vis_reg_loss =  l1_criterion(output_2, transfer_2)
 
         # consistency loss
         consistency_loss = mse_criterion(transfer_1 - output_1, transfer_2 - output_2)
@@ -297,7 +296,7 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
                    [transfer_2, output_2, (transfer_2 - output_2) / 2]]
 
         total_loss = lambdas['identity'] * identity_loss + \
-                     lambdas['mse'] * mse_loss + \
+                     lambdas['match_gt'] * match_gt_loss + \
                      lambdas['vis_reg'] * vis_reg_loss + \
                      lambdas['consist'] * consistency_loss
 
@@ -315,15 +314,15 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
             board.add_scalar('loss/total', total_loss.item(), step + 1)
             board.add_scalar('loss/identity', identity_loss.item(), step + 1)
             board.add_scalar('loss/vis_reg', vis_reg_loss.item(), step + 1)
-            board.add_scalar('loss/mse', mse_loss.item(), step + 1)
+            board.add_scalar('loss/match_gt', match_gt_loss.item(), step + 1)
             board.add_scalar('loss/consist', consistency_loss.item(), step + 1)
             if opt.use_gan:
                 board.add_scalar('loss/Dadv', D_loss.item(),  step + 1)
                 board.add_scalar('loss/Gadv', G_adv_loss.item(),  step + 1)
 
-            pbar.set_description('step: %8d, loss: %.4f, identity: %.4f, vis_reg: %.4f, mse: %.4f, consist: %.4f'
+            pbar.set_description('step: %8d, loss: %.4f, identity: %.4f, vis_reg: %.4f, match_gt: %.4f, consist: %.4f'
                   % (step + 1, total_loss.item(), identity_loss.item(),
-                     vis_reg_loss.item(), mse_loss.item(), consistency_loss.item()))
+                     vis_reg_loss.item(), match_gt_loss.item(), consistency_loss.item()))
 
         if (step+1) % opt.save_count == 0 and single_gpu_flag(opt):
             save_checkpoint(model_module, os.path.join(opt.checkpoint_dir, opt.name, 'step_%06d.pth' % (step + 1)))
@@ -339,7 +338,7 @@ def train_identity_embedding(opt, train_loader, model, board):
     triplet_criterion = torch.nn.TripletMarginLoss(margin=0.3)
 
     # optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.5, 0.999))
+    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)
 
     pbar = range(opt.keep_step + opt.decay_step)
     if single_gpu_flag(opt):
@@ -512,8 +511,8 @@ def main():
                 save_checkpoint(model_module, os.path.join(opt.checkpoint_dir, opt.name, 'tom_final.pth'))
     else:
         raise NotImplementedError('Model [%s] is not implemented' % opt.stage)
-        
-  
+
+
     print('Finished training %s, nameed: %s!' % (opt.stage, opt.name))
 
 if __name__ == "__main__":
