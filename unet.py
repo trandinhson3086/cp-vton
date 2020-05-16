@@ -184,6 +184,7 @@ class Discriminator(nn.Module):
         return output, cam_logit
 
     def forward(self, input):
+        input = F.interpolate(input, size=(256,256), mode='bilinear')
         local, local_cam_logit = self.get_feat(input, self.local_conv, self.local_cam, self.local_last)
         glob, glob_cam_logit = self.get_feat(input, self.global_conv, self.global_cam, self.global_last)
         return local, local_cam_logit, glob, glob_cam_logit
