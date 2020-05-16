@@ -223,3 +223,26 @@ class CAM(nn.Module):
         x = self.activation(self.conv1x1(x))
 
         return x, cam_logit
+
+class AccDiscriminator(nn.Module):
+    def __init__(self, ndf=32):
+        super().__init__()
+        self.ndf = ndf
+        n_layers = 8
+        
+        model = [nn.ReflectionPad2d(1),
+                 spectral_norm(nn.Conv2d(3, self.ndf, kernel_size=4, stride=2, padding=0, bias=True)),
+                 nn.LeakyReLU(0.2, True)]
+
+        for i in range(1, n_layers - 2):
+            mult = 2 ** (i - 1)
+            model += [nn.ReflectionPad2d(1),
+                      spectral_norm(nn.Conv2d(self.ndf * mult, self.ndf * mult * 2, kernel_size=4, stride=2, padding=0, bias=True)),
+                      nn.LeakyReLU(0.2, True)]
+
+        mult = 2 ** (n_layers - 2 - 1)
+        model+= = [spectral_norm(nn.Conv2d(self.ndf*mult, 1, 4, padding=0, stride=1, bias=False))]
+        self.model = nn.Sequential(*model)
+
+    def forward(self, input):
+        return self.model(input)
