@@ -10,7 +10,7 @@ import time
 from cp_dataset import CPDataset, CPDataLoader
 from networks import GMM, UnetGenerator, VGGLoss, load_checkpoint, save_checkpoint
 from resnet import Embedder
-from unet import UNet, VGGExtractor, Discriminator
+from unet import UNet, VGGExtractor, Discriminator, AccDiscriminator
 from torch.utils.tensorboard import SummaryWriter
 from visualization import board_add_images
 from tqdm import tqdm
@@ -245,8 +245,13 @@ def train_tom_gmm(opt, train_loader, model, model_module, gmm_model, gmm_model_m
             save_checkpoint(gmm_model_module, os.path.join(opt.checkpoint_dir, opt.name, 'step_warp_%06d.pth' % (step + 1)))
 
 
-
-def train_residual(opt, train_loader, model, model_module, gmm_model, generator, image_embedder, board, discriminator=None, discriminator_module=None):
+def train_residual(opt, train_loader, model, 
+                   model_module, gmm_model, 
+                   generator, image_embedder, 
+                   board, discriminator=None, 
+                   discriminator_module=None,
+                   acc_discriminator=None, 
+                   acc_discriminator_module=None):
 
     lambdas_vis = {'l1': 1.0, 'prc': 0.05, 'style': 100.0}
     lambdas = {'adv': 0.25, 'identity': 500, 'match_gt': 20, 'vis_reg': 3, 'consist': 50}
@@ -255,6 +260,8 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
     gmm_model.eval()
     image_embedder.eval()
     generator.eval()
+    discriminator.train()
+    acc_discriminator.train()
 
     # criterion
     l1_criterion = nn.L1Loss()
@@ -263,9 +270,10 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
     adv_criterion = utils.AdversarialLoss('lsgan').cuda()
 
     # optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.5, 0.999))
+    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.5, 0.999), weight_decay=1e-4)
     if opt.use_gan:
-        D_optim = torch.optim.Adam(discriminator.parameters(), lr=opt.lr, betas=(0.5, 0.999), weight_decay=1e-4)
+        D_optim = torch.optim.Adam(list(discriminator.parameters()) + list(acc_discriminator.parameters())
+                                   , lr=opt.lr, betas=(0.5, 0.999), weight_decay=1e-4)
 
     pbar = range(opt.keep_step + opt.decay_step)
     if single_gpu_flag(opt):
@@ -308,49 +316,44 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
             transfer_2 = c_2 * m_composite_2 + p_rendered_2 * (1 - m_composite_2)
 
 
-        gt_residual = (torch.mean(im, dim=1) - torch.mean(transfer_1, dim=1)).unsqueeze(1)
+        gt_residual = (torch.mean(im, dim=1) - torch.mean(transfer_1, dim=1)).unsqueeze(1).detach()
 
-        output_1 = model(torch.cat([transfer_1, gt_residual.detach()], dim=1))
-        output_2 = model(torch.cat([transfer_2, gt_residual.detach()], dim=1))
-
-        embedding_1 = image_embedder(output_1)
-        embedding_2 = image_embedder(output_2)
-
-        embedding_1_t = image_embedder(transfer_1)
-        embedding_2_t = image_embedder(transfer_2)
+        output_1 = model(torch.cat([transfer_1, gt_residual], dim=1))
+        output_2 = model(torch.cat([transfer_2, gt_residual], dim=1))
 
         if opt.use_gan:
             # train discriminator
-            real_L_logit, real_L_cam_logit, real_G_logit, real_G_cam_logit = discriminator(F.interpolate(im, size=(256, 256), mode='bilinear'))
-            fake_L_logit_1, fake_L_cam_logit_1, fake_G_logit_1, fake_G_cam_logit_1 = discriminator(F.interpolate(output_1, size=(256, 256), mode='bilinear').detach())
-            fake_L_logit_2, fake_L_cam_logit_2, fake_G_logit_2, fake_G_cam_logit_2 = discriminator(F.interpolate(output_2, size=(256, 256), mode='bilinear').detach())
+            real_L_logit, real_L_cam_logit, real_G_logit, real_G_cam_logit = discriminator(im)
+            fake_L_logit, fake_L_cam_logit, fake_G_logit, fake_G_cam_logit = discriminator(torch.cat([output_1, output_2], 0).detach())
 
             D_true_loss = adv_criterion(real_L_logit, True) + \
                      adv_criterion(real_G_logit, True) + \
                      adv_criterion(real_L_cam_logit, True) + \
                      adv_criterion(real_G_cam_logit, True)
-            D_fake_loss =  adv_criterion(torch.cat([fake_L_cam_logit_1, fake_L_cam_logit_2], dim=0), False) + \
-                     adv_criterion(torch.cat([fake_G_cam_logit_1, fake_G_cam_logit_2], dim=0), False) + \
-                     adv_criterion(torch.cat([fake_L_logit_1, fake_L_logit_2], dim=0), False) + \
-                     adv_criterion(torch.cat([fake_G_logit_1, fake_G_logit_2], dim=0), False)
+            D_fake_loss =  adv_criterion(fake_L_cam_logit, False) + \
+                     adv_criterion(fake_G_cam_logit, False) + \
+                     adv_criterion(fake_L_logit, False) + \
+                     adv_criterion(fake_G_logit, False)
+            
+            real_A_logit = acc_discriminator(transfer_1.detach(), output_1.detach())
+            fake_A_logit = acc_discriminator(transfer_2.detach(), output_2.detach())
+            D_A_loss = adv_criterion(real_A_logit, True) + adv_criterion(fake_A_logit, False)
 
-            D_loss = D_true_loss + D_fake_loss
+            D_loss = D_true_loss + D_fake_loss + D_A_loss
             D_optim.zero_grad()
             D_loss.backward()
             D_optim.step()
 
             # train generator
-            fake_L_logit_1, fake_L_cam_logit_1, fake_G_logit_1, fake_G_cam_logit_1 = discriminator(F.interpolate(output_1, size=(256, 256), mode='bilinear'))
-            fake_L_logit_2, fake_L_cam_logit_2, fake_G_logit_2, fake_G_cam_logit_2 = discriminator(F.interpolate(output_2, size=(256, 256), mode='bilinear'))
-
-            G_adv_loss = adv_criterion(torch.cat([fake_L_logit_1, fake_L_logit_2], dim=0), True) + \
-                         adv_criterion(torch.cat([fake_G_logit_1, fake_G_logit_2], dim=0), True) + \
-                         adv_criterion(torch.cat([fake_L_cam_logit_1, fake_L_cam_logit_2], dim=0), True) + \
-                         adv_criterion(torch.cat([fake_G_cam_logit_1, fake_G_cam_logit_2], dim=0), True)
-
-        # identity loss
-        identity_loss = mse_criterion(embedding_1, embedding_1_t) + mse_criterion(embedding_2, embedding_2_t)
-
+            fake_L_logit, fake_L_cam_logit, fake_G_logit, fake_G_cam_logit = discriminator(torch.cat([output_1, output_2], 0))
+            fake_A_logit = acc_discriminator(transfer_2, output_2)
+            
+            G_adv_loss = adv_criterion(fake_L_logit, True) + \
+                         adv_criterion(fake_G_logit, True) + \
+                         adv_criterion(fake_L_cam_logit, True) + \
+                         adv_criterion(fake_G_cam_logit, True) +\
+                         adv_criterion(fake_A_logit, True)
+            
         output_1_feats = vgg_extractor(output_1)
         gt_feats = vgg_extractor(im)
         output_2_feats = vgg_extractor(output_2)
@@ -372,10 +375,8 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
                    [transfer_1, output_1, (transfer_1 - output_1) / 2],
                    [transfer_2, output_2, (transfer_2 - output_2) / 2]]
 
-        total_loss = lambdas['identity'] * identity_loss + \
-                     lambdas['match_gt'] * match_gt_loss + \
+        total_loss = lambdas['match_gt'] * match_gt_loss + \
                      lambdas['vis_reg'] * vis_reg_loss + \
-                     lambdas['consist'] * consistency_loss
 
         if opt.use_gan:
             total_loss += lambdas['adv'] * G_adv_loss
@@ -389,22 +390,21 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
             if (step + 1) % opt.display_count == 0:
                 board_add_images(board, str(step + 1), visuals, step + 1)
             board.add_scalar('loss/total', total_loss.item(), step + 1)
-            board.add_scalar('loss/identity', identity_loss.item(), step + 1)
             board.add_scalar('loss/vis_reg', vis_reg_loss.item(), step + 1)
             board.add_scalar('loss/match_gt', match_gt_loss.item(), step + 1)
-            board.add_scalar('loss/consist', consistency_loss.item(), step + 1)
             if opt.use_gan:
                 board.add_scalar('loss/Dadv', D_loss.item(),  step + 1)
                 board.add_scalar('loss/Gadv', G_adv_loss.item(),  step + 1)
 
-            pbar.set_description('step: %8d, loss: %.4f, identity: %.4f, vis_reg: %.4f, match_gt: %.4f, consist: %.4f'
-                  % (step + 1, total_loss.item(), identity_loss.item(),
-                     vis_reg_loss.item(), match_gt_loss.item(), consistency_loss.item()))
+            pbar.set_description('step: %8d, loss: %.4f, vis_reg: %.4f, match_gt: %.4f'
+                  % (step + 1, total_loss.item(),
+                     vis_reg_loss.item(), match_gt_loss.item()))
 
         if (step+1) % opt.save_count == 0 and single_gpu_flag(opt):
             save_checkpoint(model_module, os.path.join(opt.checkpoint_dir, opt.name, 'step_%06d.pth' % (step + 1)))
             if opt.use_gan:
                 save_checkpoint(discriminator_module, os.path.join(opt.checkpoint_dir, opt.name, 'step_disc_%06d.pth' % (step + 1)))
+                save_checkpoint(acc_discriminator_module, os.path.join(opt.checkpoint_dir, opt.name, 'step_acc_disc_%06d.pth' % (step + 1)))
 
 def train_identity_embedding(opt, train_loader, model, board):
     model.cuda()
@@ -587,6 +587,10 @@ def main():
             discriminator = Discriminator()
             discriminator.apply(utils.weights_init('gaussian'))
             discriminator.cuda()
+            
+            acc_discriminator = AccDiscriminator()
+            acc_discriminator.apply(utils.weights_init('gaussian'))
+            acc_discriminator.cuda()
 
         if not opt.checkpoint =='' and os.path.exists(opt.checkpoint):
             load_checkpoint(model, opt.checkpoint)
@@ -596,11 +600,13 @@ def main():
         model_module = model
         if opt.use_gan:
             discriminator_module = discriminator
+            acc_discriminator_module = acc_discriminator
+
         if opt.distributed:
             model = torch.nn.parallel.DistributedDataParallel(model,
-                                                                       device_ids=[local_rank],
-                                                                       output_device=local_rank,
-                                                                       find_unused_parameters=True)
+                                                           device_ids=[local_rank],
+                                                           output_device=local_rank,
+                                                           find_unused_parameters=True)
             model_module = model.module
             if opt.use_gan:
                 discriminator = torch.nn.parallel.DistributedDataParallel(discriminator,
@@ -608,10 +614,22 @@ def main():
                                                                   output_device=local_rank,
                                                                   find_unused_parameters=True)
                 discriminator_module = discriminator.module
+                
+                acc_discriminator = torch.nn.parallel.DistributedDataParallel(acc_discriminator,
+                                                                  device_ids=[local_rank],
+                                                                  output_device=local_rank,
+                                                                  find_unused_parameters=True)
+                acc_discriminator_module = acc_discriminator.module
 
 
         if opt.use_gan:
-            train_residual(opt, train_loader, model, model_module, gmm_model, generator_model, embedder_model, board, discriminator=discriminator, discriminator_module=discriminator_module)
+            train_residual(opt, train_loader, model, model_module, 
+                           gmm_model, generator_model, embedder_model, 
+                           board, discriminator=discriminator, 
+                           discriminator_module=discriminator_module, 
+                           acc_discriminator=acc_discriminator, 
+                           acc_discriminator_module=acc_discriminator_module)
+            
             if single_gpu_flag(opt):
                 save_checkpoint({"generator": model_module, "discriminator": discriminator_module}, os.path.join(opt.checkpoint_dir, opt.name, 'tom_final.pth'))
         else:
