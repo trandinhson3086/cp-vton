@@ -231,7 +231,7 @@ class AccDiscriminator(nn.Module):
         n_layers = 8
         
         model = [nn.ReflectionPad2d(1),
-                 spectral_norm(nn.Conv2d(3, self.ndf, kernel_size=4, stride=2, padding=0, bias=True)),
+                 spectral_norm(nn.Conv2d(6, self.ndf, kernel_size=4, stride=2, padding=0, bias=True)),
                  nn.LeakyReLU(0.2, True)]
 
         for i in range(1, n_layers - 2):
@@ -244,5 +244,5 @@ class AccDiscriminator(nn.Module):
         model+= = [spectral_norm(nn.Conv2d(self.ndf*mult, 1, 4, padding=0, stride=1, bias=False))]
         self.model = nn.Sequential(*model)
 
-    def forward(self, input):
-        return self.model(input)
+    def forward(self, input1, input2):
+        return self.model(torch.cat([input1, input2], 1))
