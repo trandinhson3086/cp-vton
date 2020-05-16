@@ -33,7 +33,7 @@ def single_gpu_flag(args):
 
 def get_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--name", default="GMM")
+    parser.add_argument("--name", default="generator_3800_fix_residual")
     parser.add_argument("--gpu_ids", default="")
     parser.add_argument('-j', '--workers', type=int, default=1)
     parser.add_argument('-b', '--batch-size', type=int, default=4)
@@ -77,13 +77,16 @@ def test_residual(opt, loader, model, gmm_model, generator):
     os.makedirs(os.path.join(test_files_dir, "refined"), exist_ok=True)
     os.makedirs(os.path.join(test_files_dir, "diff"), exist_ok=True)
 
-    for i, inputs in tqdm(enumerate(loader)):
+    for i, (inputs, inputs_2) in tqdm(enumerate(loader)):
 
         im = inputs['image'].cuda()
         agnostic = inputs['agnostic'].cuda()
 
         c = inputs['cloth'].cuda()
         cm = inputs['cloth_mask'].cuda()
+
+        c_2 = inputs_2['cloth'].cuda()
+        cm_2 = inputs_2['cloth_mask'].cuda()
 
         with torch.no_grad():
             grid, theta = gmm_model(agnostic, c)
@@ -96,7 +99,17 @@ def test_residual(opt, loader, model, gmm_model, generator):
             m_composite = F.sigmoid(m_composite)
             transfer_1 = c * m_composite + p_rendered * (1 - m_composite)
 
-            gt_residual = (torch.mean(im, dim=1) - torch.mean(transfer_1, dim=1)).unsqueeze(1) / 2
+            grid_2, theta_2 = gmm_model(agnostic, c_2)
+            c_2 = F.grid_sample(c_2, grid_2, padding_mode='border')
+            cm_2 = F.grid_sample(cm_2, grid_2, padding_mode='zeros')
+
+            outputs_2 = generator(torch.cat([agnostic, c_2], 1))
+            p_rendered_2, m_composite_2 = torch.split(outputs_2, 3, 1)
+            p_rendered_2 = F.tanh(p_rendered_2)
+            m_composite_2 = F.sigmoid(m_composite_2)
+            transfer_2 = c_2 * m_composite_2 + p_rendered_2 * (1 - m_composite_2)
+
+            gt_residual = (torch.mean(im, dim=1) - torch.mean(transfer_2, dim=1)).unsqueeze(1) / 2
 
             output_1 = model(torch.cat([transfer_1, gt_residual.detach()], dim=1))
 

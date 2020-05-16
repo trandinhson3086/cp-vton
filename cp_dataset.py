@@ -54,13 +54,14 @@ class CPDataset(data.Dataset):
             alternative_index = random.choice(range(len(self)))
             while alternative_index == index:
                 alternative_index = random.choice(range(len(self)))
-            return self.get_item(index), self.get_item(alternative_index)
-        else:
-            return self.get_item(index)
+            return self.get_item(self.c_names[index], self.im_names[index]), self.get_item(self.c_names[alternative_index], self.im_names[alternative_index])
 
-    def get_item(self, index):
-        c_name = self.c_names[index]
-        im_name = self.im_names[index]
+        elif self.opt.datamode == "test":
+            return self.get_item(self.c_names[index], self.im_names[index]), self.get_item(self.im_names[index].replace("_0.","_1."), self.im_names[index])
+        else:
+            return self.get_item(self.c_names[index], self.im_names[index])
+
+    def get_item(self, c_name, im_name):
 
         # cloth image & cloth mask
         c = Image.open(osp.join(self.data_path, 'cloth', c_name))

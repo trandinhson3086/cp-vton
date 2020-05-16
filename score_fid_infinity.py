@@ -415,12 +415,13 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    root_path = "test_files_dir/GMM/"
+    root_path = "test_files_dir/generator_step_38000_test_file_big_test_set/"
     paths = ["baseline", "refined"]
 
     for path in paths:
         gen_m, gen_s = compute_path_statistics(root_path + path, args.batch_size)
-        data_m, data_s = compute_path_statistics(root_path + "gt", args.batch_size)
+        data_m, data_s = compute_path_statistics("test_files_dir/GMM/gt", args.batch_size)
+        # data_m, data_s = compute_path_statistics(root_path + "gt", args.batch_size)
 
         FID = numpy_calculate_frechet_distance(gen_m, gen_s, data_m, data_s)
         print("FID inf", FID)

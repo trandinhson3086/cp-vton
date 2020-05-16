@@ -171,10 +171,85 @@ def train_tom(opt, train_loader, model, model_module, gmm_model, board):
             save_checkpoint(model_module, os.path.join(opt.checkpoint_dir, opt.name, 'step_%06d.pth' % (step+1)))
 
 
+def train_tom_gmm(opt, train_loader, model, model_module, gmm_model, gmm_model_module, board):
+    model.train()
+    gmm_model.train()
+
+    # criterion
+    criterionL1 = nn.L1Loss()
+    criterionVGG = VGGLoss()
+    criterionMask = nn.L1Loss()
+
+    # optimizer
+    optimizer = torch.optim.Adam(list(model.parameters()) + list(gmm_model.parameters()), lr=opt.lr, betas=(0.5, 0.999))
+
+    for step in range(opt.keep_step + opt.decay_step):
+        iter_start_time = time.time()
+        inputs = train_loader.next_batch()
+
+        im = inputs['image'].cuda()
+        im_pose = inputs['pose_image']
+        im_h = inputs['head']
+        shape = inputs['shape']
+        im_c =  inputs['parse_cloth'].cuda()
+
+        agnostic = inputs['agnostic'].cuda()
+        c = inputs['cloth'].cuda()
+        cm = inputs['cloth_mask'].cuda()
+
+        with torch.no_grad():
+            grid, theta = gmm_model(agnostic, c)
+            c = F.grid_sample(c, grid, padding_mode='border')
+            cm = F.grid_sample(cm, grid, padding_mode='zeros')
+
+        # grid, theta = model(agnostic, c)
+        # warped_cloth = F.grid_sample(c, grid, padding_mode='border')
+        # warped_mask = F.grid_sample(cm, grid, padding_mode='zeros')
+        # warped_grid = F.grid_sample(im_g, grid, padding_mode='zeros')
+
+        outputs = model(torch.cat([agnostic, c], 1))
+        p_rendered, m_composite = torch.split(outputs, 3, 1)
+        p_rendered = F.tanh(p_rendered)
+        m_composite = F.sigmoid(m_composite)
+        p_tryon = c * m_composite + p_rendered * (1 - m_composite)
+
+        visuals = [[im_h, shape, im_pose],
+                   [c, cm * 2 - 1, m_composite * 2 - 1],
+                   [p_rendered, p_tryon, im]]
+
+        loss_l1 = criterionL1(p_tryon, im)
+        loss_vgg = criterionVGG(p_tryon, im)
+        loss_mask = criterionMask(m_composite, cm)
+        loss_warp = criterionL1(c, im_c)
+
+        loss = loss_l1 + loss_vgg + loss_mask + loss_warp
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if (step + 1) % opt.display_count == 0 and single_gpu_flag(opt):
+            board_add_images(board, 'combine', visuals, step + 1)
+            board.add_scalar('metric', loss.item(), step + 1)
+            board.add_scalar('L1', loss_l1.item(), step + 1)
+            board.add_scalar('VGG', loss_vgg.item(), step + 1)
+            board.add_scalar('MaskL1', loss_mask.item(), step + 1)
+            board.add_scalar('Warp', loss_warp.item(), step + 1)
+
+            t = time.time() - iter_start_time
+            print('step: %8d, time: %.3f, loss: %.4f, l1: %.4f, vgg: %.4f, mask: %.4f, warp: %.4f'
+                  % (step + 1, t, loss.item(), loss_l1.item(),
+                     loss_vgg.item(), loss_mask.item(), loss_warp.item()), flush=True)
+
+        if (step + 1) % opt.save_count == 0 and single_gpu_flag(opt):
+            save_checkpoint(model_module, os.path.join(opt.checkpoint_dir, opt.name, 'step_%06d.pth' % (step + 1)))
+            save_checkpoint(gmm_model_module, os.path.join(opt.checkpoint_dir, opt.name, 'step_warp_%06d.pth' % (step + 1)))
+
+
+
 def train_residual(opt, train_loader, model, model_module, gmm_model, generator, image_embedder, board, discriminator=None, discriminator_module=None):
 
     lambdas_vis = {'l1': 1.0, 'prc': 0.05, 'style': 100.0}
-    lambdas = {'adv': 0.25, 'identity': 20, 'match_gt': 20, 'vis_reg': 1, 'consist': 50}
+    lambdas = {'adv': 0.25, 'identity': 500, 'match_gt': 20, 'vis_reg': 3, 'consist': 50}
 
     model.train()
     gmm_model.eval()
@@ -278,6 +353,8 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
 
         output_1_feats = vgg_extractor(output_1)
         gt_feats = vgg_extractor(im)
+        output_2_feats = vgg_extractor(output_2)
+        transfer_2_feats = vgg_extractor(transfer_2)
 
         style_reg = utils.compute_style_loss(output_1_feats, gt_feats, l1_criterion)
         perceptual_reg = utils.compute_perceptual_loss(output_1_feats, gt_feats, l1_criterion)
@@ -285,7 +362,7 @@ def train_residual(opt, train_loader, model, model_module, gmm_model, generator,
         # match ground truth loss
         match_gt_loss = l1_criterion(output_1, im) * lambdas_vis["l1"] + style_reg * lambdas_vis["style"] + perceptual_reg * lambdas_vis["prc"]
 
-        vis_reg_loss =  l1_criterion(output_2, transfer_2)
+        vis_reg_loss = utils.compute_style_loss(output_2_feats, transfer_2_feats, l1_criterion) * lambdas_vis["style"] + utils.compute_perceptual_loss(output_2_feats, transfer_2_feats, l1_criterion) * lambdas_vis["prc"]
 
         # consistency loss
         consistency_loss = mse_criterion(transfer_1 - output_1, transfer_2 - output_2)
@@ -448,6 +525,38 @@ def main():
         train_tom(opt, train_loader, model, model_module, gmm_model, board)
         if single_gpu_flag(opt):
             save_checkpoint(model_module, os.path.join(opt.checkpoint_dir, opt.name, 'tom_final.pth'))
+    elif opt.stage == 'TOM+WARP':
+
+        gmm_model = GMM(opt)
+        gmm_model.cuda()
+
+        model = UnetGenerator(25, 4, 6, ngf=64, norm_layer=nn.InstanceNorm2d)
+        model.cuda()
+        # if opt.distributed:
+        #     model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+
+        if not opt.checkpoint =='' and os.path.exists(opt.checkpoint):
+            load_checkpoint(model, opt.checkpoint)
+
+        model_module = model
+        gmm_model_module = gmm_model
+        if opt.distributed:
+            model = torch.nn.parallel.DistributedDataParallel(model,
+                                                                       device_ids=[local_rank],
+                                                                       output_device=local_rank,
+                                                                       find_unused_parameters=True)
+            model_module = model.module
+            gmm_model = torch.nn.parallel.DistributedDataParallel(gmm_model,
+                                                                       device_ids=[local_rank],
+                                                                       output_device=local_rank,
+                                                                       find_unused_parameters=True)
+            gmm_model_module = gmm_model.module
+
+
+        train_tom_gmm(opt, train_loader, model, model_module, gmm_model, gmm_model_module, board)
+        if single_gpu_flag(opt):
+            save_checkpoint(model_module, os.path.join(opt.checkpoint_dir, opt.name, 'tom_final.pth'))
+
     elif opt.stage == "identity":
         model = Embedder()
         if not opt.checkpoint =='' and os.path.exists(opt.checkpoint):
