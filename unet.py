@@ -242,7 +242,7 @@ class AccDiscriminator(nn.Module):
                       nn.LeakyReLU(0.2, True)]
 
         mult = 2 ** (n_layers - 2 - 1)
-        model+= = [spectral_norm(nn.Conv2d(self.ndf*mult, 1, 4, padding=0, stride=1, bias=False))]
+        model += [spectral_norm(nn.Conv2d(self.ndf*mult, 1, 4, padding=0, stride=1, bias=False))]
         self.model = nn.Sequential(*model)
 
     def forward(self, input1, input2):

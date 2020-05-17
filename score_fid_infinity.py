@@ -410,12 +410,12 @@ if __name__ == '__main__':
 
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
 
-    parser.add_argument('--batch-size', type=int, default=512,
+    parser.add_argument('--batch-size', type=int, default=128,
                         help='Batch size to use')
 
     args = parser.parse_args()
 
-    root_path = "test_files_dir/generator_step_38000_test_file_big_test_set/"
+    root_path = "test_files_dir/identity_discriminator/"
     paths = ["baseline", "refined"]
 
     for path in paths:

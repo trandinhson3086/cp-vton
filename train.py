@@ -35,6 +35,7 @@ def get_opt():
     parser.add_argument('--local_rank', type=int, default=0, help="gpu to use, used for distributed training")
 
     parser.add_argument("--use_gan",  action='store_true')
+    parser.add_argument("--no_consist",  action='store_true')
 
     parser.add_argument("--dataroot", default = "data")
     parser.add_argument("--datamode", default = "train")
@@ -254,7 +255,7 @@ def train_residual(opt, train_loader, model,
                    acc_discriminator_module=None):
 
     lambdas_vis = {'l1': 1.0, 'prc': 0.05, 'style': 100.0}
-    lambdas = {'adv': 0.25, 'identity': 500, 'match_gt': 20, 'vis_reg': 3, 'consist': 50}
+    lambdas = {'adv': 0.25, 'adv_identity': 2, 'identity': 500, 'match_gt': 20, 'vis_reg': 3, 'consist': 50}
 
     model.train()
     gmm_model.eval()
@@ -330,7 +331,7 @@ def train_residual(opt, train_loader, model,
                      adv_criterion(real_G_logit, True) + \
                      adv_criterion(real_L_cam_logit, True) + \
                      adv_criterion(real_G_cam_logit, True)
-            D_fake_loss =  adv_criterion(fake_L_cam_logit, False) + \
+            D_fake_loss = adv_criterion(fake_L_cam_logit, False) + \
                      adv_criterion(fake_G_cam_logit, False) + \
                      adv_criterion(fake_L_logit, False) + \
                      adv_criterion(fake_G_logit, False)
@@ -338,8 +339,9 @@ def train_residual(opt, train_loader, model,
             real_A_logit = acc_discriminator(transfer_1.detach(), output_1.detach())
             fake_A_logit = acc_discriminator(transfer_2.detach(), output_2.detach())
             D_A_loss = adv_criterion(real_A_logit, True) + adv_criterion(fake_A_logit, False)
+            D__loss = D_true_loss + D_fake_loss
 
-            D_loss = D_true_loss + D_fake_loss + D_A_loss
+            D_loss = D__loss + D_A_loss
             D_optim.zero_grad()
             D_loss.backward()
             D_optim.step()
@@ -351,8 +353,8 @@ def train_residual(opt, train_loader, model,
             G_adv_loss = adv_criterion(fake_L_logit, True) + \
                          adv_criterion(fake_G_logit, True) + \
                          adv_criterion(fake_L_cam_logit, True) + \
-                         adv_criterion(fake_G_cam_logit, True) +\
-                         adv_criterion(fake_A_logit, True)
+                         adv_criterion(fake_G_cam_logit, True)
+            G_adv_identity_loss = adv_criterion(fake_A_logit, True)
             
         output_1_feats = vgg_extractor(output_1)
         gt_feats = vgg_extractor(im)
@@ -376,10 +378,15 @@ def train_residual(opt, train_loader, model,
                    [transfer_2, output_2, (transfer_2 - output_2) / 2]]
 
         total_loss = lambdas['match_gt'] * match_gt_loss + \
-                     lambdas['vis_reg'] * vis_reg_loss + \
+                     lambdas['vis_reg'] * vis_reg_loss\
+
+        if not opt.no_consist:
+            total_loss += lambdas['consist'] * consistency_loss
+        # lambdas['identity'] * identity_loss + \
 
         if opt.use_gan:
             total_loss += lambdas['adv'] * G_adv_loss
+            total_loss += lambdas['adv_identity'] * G_adv_identity_loss
 
         optimizer.zero_grad()
         total_loss.backward()
@@ -392,9 +399,13 @@ def train_residual(opt, train_loader, model,
             board.add_scalar('loss/total', total_loss.item(), step + 1)
             board.add_scalar('loss/vis_reg', vis_reg_loss.item(), step + 1)
             board.add_scalar('loss/match_gt', match_gt_loss.item(), step + 1)
+            if not opt.no_consist:
+                board.add_scalar('loss/consist', consistency_loss.item(), step + 1)
             if opt.use_gan:
-                board.add_scalar('loss/Dadv', D_loss.item(),  step + 1)
+                board.add_scalar('loss/Dadv', D__loss.item(),  step + 1)
+                board.add_scalar('loss/Dadv_id', D_A_loss.item(),  step + 1)
                 board.add_scalar('loss/Gadv', G_adv_loss.item(),  step + 1)
+                board.add_scalar('loss/Gadv_id', G_adv_identity_loss.item(),  step + 1)
 
             pbar.set_description('step: %8d, loss: %.4f, vis_reg: %.4f, match_gt: %.4f'
                   % (step + 1, total_loss.item(),

@@ -33,10 +33,10 @@ def single_gpu_flag(args):
 
 def get_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--name", default="generator_3800_fix_residual")
+    parser.add_argument("--name", default="identity_discriminator")
     parser.add_argument("--gpu_ids", default="")
     parser.add_argument('-j', '--workers', type=int, default=1)
-    parser.add_argument('-b', '--batch-size', type=int, default=4)
+    parser.add_argument('-b', '--batch-size', type=int, default=16)
 
     parser.add_argument('--local_rank', type=int, default=0, help="gpu to use, used for distributed training")
 
@@ -109,7 +109,7 @@ def test_residual(opt, loader, model, gmm_model, generator):
             m_composite_2 = F.sigmoid(m_composite_2)
             transfer_2 = c_2 * m_composite_2 + p_rendered_2 * (1 - m_composite_2)
 
-            gt_residual = (torch.mean(im, dim=1) - torch.mean(transfer_2, dim=1)).unsqueeze(1) / 2
+            gt_residual = (torch.mean(im, dim=1) - torch.mean(transfer_2, dim=1)).unsqueeze(1)
 
             output_1 = model(torch.cat([transfer_1, gt_residual.detach()], dim=1))
 
