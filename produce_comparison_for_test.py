@@ -33,10 +33,10 @@ def single_gpu_flag(args):
 
 def get_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--name", default="identity_discriminator")
+    parser.add_argument("--name", default="test_vton")
     parser.add_argument("--gpu_ids", default="")
-    parser.add_argument('-j', '--workers', type=int, default=1)
-    parser.add_argument('-b', '--batch-size', type=int, default=16)
+    parser.add_argument('-j', '--workers', type=int, default=16)
+    parser.add_argument('-b', '--batch-size', type=int, default=32)
 
     parser.add_argument('--local_rank', type=int, default=0, help="gpu to use, used for distributed training")
 
@@ -160,7 +160,7 @@ def main():
     gmm_model.cuda()
 
     generator_model = UnetGenerator(25, 4, 6, ngf=64, norm_layer=nn.InstanceNorm2d)
-    load_checkpoint(generator_model, "checkpoints/tom_train_new/step_038000.pth")
+    load_checkpoint(generator_model, "checkpoints/tom_train_new_2/step_070000.pth")
     generator_model.cuda()
 
     embedder_model = Embedder()

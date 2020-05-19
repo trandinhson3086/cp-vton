@@ -410,12 +410,12 @@ if __name__ == '__main__':
 
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
 
-    parser.add_argument('--batch-size', type=int, default=128,
+    parser.add_argument('--batch-size', type=int, default=512,
                         help='Batch size to use')
 
     args = parser.parse_args()
 
-    root_path = "test_files_dir/identity_discriminator/"
+    root_path = "test_files_dir/residual_gan_train_new_more_consist_loss_base_model_2_step_070000/"
     paths = ["baseline", "refined"]
 
     for path in paths:

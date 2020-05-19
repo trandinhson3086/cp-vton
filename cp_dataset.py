@@ -32,7 +32,7 @@ class CPDataset(data.Dataset):
         self.transform_1d = transforms.Compose([
                 transforms.ToTensor(),
                 transforms.Normalize((0.5,), (0.5,))])
-        self.paired = (opt.stage == "identity" or opt.stage == "residual") and opt.datamode == "train"
+        self.paired = (opt.stage == "identity" or opt.stage == "residual" or opt.stage == "residual_old") and opt.datamode == "train"
 
         # load data list
         im_names = []
