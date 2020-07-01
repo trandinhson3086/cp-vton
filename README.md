@@ -1,16 +1,18 @@
 # Sample on Real-test Try-on Results
-
+### Sample 1
 ![image](https://github.com/trandinhson3086/cp-vton/blob/master/data/cp3.JPG)
-Sample 1
 
 
+### Sample 2
 ![image](https://github.com/trandinhson3086/cp-vton/blob/master/data/cp4.JPG)
-Sample 2
 
-### Limmitation
+
+### Comments
+#### Limitation
 - Noise
 - Changing at pant color
-- low quality
+- Low quality
+
 
 # Toward Characteristic-Preserving Image-based Virtual Try-On Network
 
