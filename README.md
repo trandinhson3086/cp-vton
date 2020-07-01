@@ -1,3 +1,15 @@
+# Sample on Real-test Try-on Results
+
+![image](https://github.com/trandinhson3086/cp-vton/blob/master/data/cp3.JPG)
+
+![image](https://github.com/trandinhson3086/cp-vton/blob/master/data/cp4.JPG)
+
+
+### Limmitation
+- Noise
+- Changing at pant color
+- low quality
+
 # Toward Characteristic-Preserving Image-based Virtual Try-On Network
 
 Reimplemented code for eccv2018 paper 'Toward Characteristic-Preserving Image-based Virtual Try-On Network'. 
